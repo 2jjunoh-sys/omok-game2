@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>온라인 오목</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; }
+    canvas { border: 2px solid #333; margin-top: 20px; }
+    #controls { margin: 10px; }
+  </style>
+</head>
+<body>
+  <h1>온라인 오목</h1>
+  <div id="controls">
+    <button onclick="startGame('black')">흑돌 시작 (AI/온라인)</button>
+    <button onclick="startGame('white')">백돌 시작 (AI/온라인)</button>
+    <input id="roomId" placeholder="방 ID 입력">
+    <button onclick="joinRoom()">방 참가</button>
+  </div>
+  <canvas id="board" width="600" height="600"></canvas>
+
+  <!-- ✅ Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js"></script>
+
+  <script>
+    // ✅ Firebase 설정 (자신의 프로젝트 정보로 교체)
+    const firebaseConfig = {
+      apiKey: "여기에-APIKEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      databaseURL: "https://YOUR_PROJECT_ID.firebaseio.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "숫자",
+      appId: "앱ID"
+    };
+
+    // Firebase 초기화
+    const app = firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+
+    // ===== 오목 게임 로직 =====
+    const canvas = document.getElementById("board");
+    const ctx = canvas.getContext("2d");
+    const size = 15;
+    const cellSize = canvas.width / size;
+    let board = Array.from({ length: size }, () => Array(size).fill(null));
+    let currentPlayer = "black"; 
+    let gameOver = false;
+    let playMode = "AI";   // "AI" 또는 "ONLINE"
+    let roomRef = null;    // Firebase 방 참조
+    let myStone = null;
+
+    function drawBoard() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = "#000";
+      for (let i = 0; i < size; i++) {
+        ctx.beginPath();
+        ctx.moveTo(cellSize / 2, cellSize / 2 + i * cellSize);
+        ctx.lineTo(canvas.width - cellSize / 2, cellSize / 2 + i * cellSize);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cellSize / 2 + i * cellSize, cellSize / 2);
+        ctx.lineTo(cellSize / 2 + i * cellSize, canvas.height - cellSize / 2);
+        ctx.stroke();
+      }
+      for (let r = 0; r < size; r++) {
+        for (let c = 0; c < size; c++) {
+          if (board[r][c]) {
+            ctx.beginPath();
+            ctx.arc(c * cellSize + cellSize/2, r * cellSize + cellSize/2, cellSize/2.5, 0, Math.PI*2);
+            ctx.fillStyle = board[r][c];
+            ctx.fill();
+          }
+        }
+      }
+    }
+
+    function checkWin(r, c, stone) {
+      const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+      for (let [dr,dc] of dirs) {
+        let count = 1;
+        let nr=r+dr, nc=c+dc;
+        while(nr>=0&&nr<size&&nc>=0&&nc<size&&board[nr][nc]===stone){ count++; nr+=dr; nc+=dc; }
+        nr=r-dr; nc=c-dc;
+        while(nr>=0&&nr<size&&nc>=0&&nc<size&&board[nr][nc]===stone){ count++; nr-=dr; nc-=dc; }
+        if(count>=5) return true;
+      }
+      return false;
+    }
+
+    function isBoardFull() {
+      return board.every(row => row.every(cell => cell !== null));
+    }
+
+    function handleClick(e) {
+      if (gameOver) return;
+      const x = e.offsetX, y = e.offsetY;
+      const c = Math.floor(x / cellSize);
+      const r = Math.floor(y / cellSize);
+      if (board[r][c]) return;
+
+      if (playMode === "AI") {
+        board[r][c] = currentPlayer;
+        if (checkWin(r,c,currentPlayer)) {
+          alert(currentPlayer + " 승리!");
+          gameOver = true;
+        } else if (isBoardFull()) {
+          alert("무승부!");
+          gameOver = true;
+        }
+        drawBoard();
+        if (!gameOver) {
+          aiMove();
+        }
+      } else if (playMode === "ONLINE") {
+        if (currentPlayer !== myStone) return; // 내 턴이 아니면 무시
+        board[r][c] = myStone;
+        drawBoard();
+        roomRef.push({ r, c, stone: myStone });
+        if (checkWin(r,c,myStone)) {
+          alert(myStone + " 승리!");
+          gameOver = true;
+        } else if (isBoardFull()) {
+          alert("무승부!");
+          gameOver = true;
+        }
+        currentPlayer = (myStone === "black") ? "white" : "black";
+      }
+    }
+
+    canvas.addEventListener("click", handleClick);
+
+    function aiMove() {
+      let empty = [];
+      for (let r=0;r<size;r++)for(let c=0;c<size;c++)if(!board[r][c])empty.push([r,c]);
+      if(empty.length===0) return;
+      const [r,c] = empty[Math.floor(Math.random()*empty.length)];
+      board[r][c] = "white";
+      if (checkWin(r,c,"white")) {
+        alert("AI 승리!");
+        gameOver = true;
+      } else if (isBoardFull()) {
+        alert("무승부!");
+        gameOver = true;
+      }
+      drawBoard();
+    }
+
+    function startGame(stone) {
+      board = Array.from({ length: size }, () => Array(size).fill(null));
+      currentPlayer = "black";
+      gameOver = false;
+      playMode = "AI";
+      myStone = stone;
+      drawBoard();
+    }
+
+    function joinRoom() {
+      const roomId = document.getElementById("roomId").value.trim();
+      if (!roomId) {
+        alert("방 ID를 입력하세요");
+        return;
+      }
+      playMode = "ONLINE";
+      board = Array.from({ length: size }, () => Array(size).fill(null));
+      currentPlayer = "black";
+      gameOver = false;
+      drawBoard();
+      roomRef = database.ref("rooms/" + roomId);
+      roomRef.remove(); // 새 게임 초기화
+      myStone = "black";
+
+      // 상대방 수신
+      roomRef.on("child_added", snapshot => {
+        const { r, c, stone } = snapshot.val();
+        if (stone !== myStone) {
+          board[r][c] = stone;
+          if (checkWin(r,c,stone)) {
+            alert(stone + " 승리!");
+            gameOver = true;
+          } else if (isBoardFull()) {
+            alert("무승부!");
+            gameOver = true;
+          }
+          drawBoard();
+          currentPlayer = myStone;
+        }
+      });
+    }
+
+    drawBoard();
+  </script>
+</body>
+</html>
